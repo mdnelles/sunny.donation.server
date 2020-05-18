@@ -3,6 +3,8 @@ const express = require("express"),
    cors = require("cors"),
    pj = require("../components/config.json"),
    Donor = require("../models/Donor"),
+   Playlist = require("../models/Playlist"),
+   Layout = require("../models/Layout"),
    shell = require("shelljs"),
    db = require("../database/db"),
    config = require("../components/config.json"),
@@ -61,8 +63,8 @@ dbadmin.post("/copyfromdb2", rf.verifyToken, (req, res) => {
 dbadmin.post("/removedupes2", rf.verifyToken, (req, res) => {
    // establish that refering url is allowed
    var sql = `DELETE A
-                    FROM  envision.donors A,
-                          envision.donors B
+                    FROM  dtn_live.donors A,
+                          dtn_live.donors B
                     WHERE  A.donorName = B.donorName AND  A.id > B.id`;
    db.sequelize
       .query(sql)
@@ -92,12 +94,9 @@ dbadmin.post("/createdb2", rf.verifyToken, (req, res) => {
       let newTable = config.global.root_db_name + req.body.newDbName;
 
       db.sequelize
-         .query(
-            `CREATE DATABASE IF NOT EXISTS ${newTable}; GRANT ALL ON  ${newTable}.* TO '${config.global.dbuser}'@'localhost' `,
-            {
-               type: db.sequelize.QueryTypes.CREATE,
-            }
-         )
+         .query(`CREATE DATABASE IF NOT EXISTS ${newTable} `, {
+            type: db.sequelize.QueryTypes.CREATE,
+         })
          .then(() => {
             res.json({ success: "Created DB: " + req.body.newDbName }).end();
          })
@@ -149,15 +148,68 @@ dbadmin.post("/showdbs2", rf.verifyToken, (req, res) => {
 });
 
 dbadmin.post("/removedb2", rf.verifyToken, (req, res) => {
-   db.sequelize
-      .query("DROP SCHEMA IF EXISTS " + req.body.DBname)
-      .then(() => {
-         res.json({ success: "db removed" }).end();
-      })
-      .catch((err) => {
-         res.json({ fail: "db remove failed:" }).end();
-         console.log(`failed to remove db: ${req.bodyDBname} Err= ` + err);
-      });
+   if (req.body.DBname !== config.global.db) {
+      db.sequelize
+         .query("DROP SCHEMA IF EXISTS " + req.body.DBname)
+         .then(() => {
+            res.json({ success: "db removed" }).end();
+         })
+         .catch((err) => {
+            res.json({ fail: "db remove failed:" }).end();
+            console.log(`failed to remove db: ${req.bodyDBname} Err= ` + err);
+         });
+   } else {
+      res.send("can not delete root DB");
+   }
+});
+
+dbadmin.post("/restore_data", rf.verifyToken, (req, res) => {
+   //I
+   Donor.destroy({
+      where: {},
+      truncate: true,
+   }).then(() => {
+      db.sequelize
+         .query("INSERT INTO donors SELECT * FROM donors_backup")
+         .then(() => {
+            Playlist.destroy({
+               where: {},
+               truncate: true,
+            }).then(() => {
+               db.sequelize
+                  .query("INSERT INTO playlists SELECT * FROM playlists_backup")
+                  .then(() => {
+                     Layout.destroy({
+                        where: {},
+                        truncate: true,
+                     })
+                        .then(() => {
+                           db.sequelize
+                              .query(
+                                 "INSERT INTO playlist_layouts SELECT * FROM playlist_layouts_backup"
+                              )
+                              .then(() => {
+                                 res.send("Data restored");
+                              })
+                              .catch((err) => {
+                                 res.send(
+                                    "data failed to restore step 3:" + err
+                                 );
+                                 console.log(err);
+                              });
+                        })
+                        .catch((err) => {
+                           res.send("data failed to restore step 2:" + err);
+                           console.log(err);
+                        });
+                  })
+                  .catch((err) => {
+                     res.send("data failed to restore step 1:" + err);
+                     console.log(err);
+                  });
+            });
+         });
+   });
 });
 
 module.exports = dbadmin;
